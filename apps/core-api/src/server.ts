@@ -1,51 +1,51 @@
 import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
 import cors from '@fastify/cors';
-import { PrismaClient } from '@prisma/client';
-import { z } from 'zod';
-import type { WebSocket } from 'ws';
+import { ZodError } from 'zod';
+import { Prisma } from '@prisma/client';
+import { env } from './env.js';
+import { authPlugin } from './auth.js';
+import { addSocket } from './realtime.js';
+import { HttpError } from './permissions.js';
+import { authRoutes } from './routes/auth.js';
+import { orgRoutes } from './routes/orgs.js';
+import { projectRoutes } from './routes/projects.js';
+import { taskRoutes } from './routes/tasks.js';
 
-const prisma = new PrismaClient();
 const app = Fastify({ logger: true });
 
-const sockets = new Set<WebSocket>();
-
-function broadcast(event: unknown) {
-  const payload = JSON.stringify(event);
-  for (const socket of sockets) {
-    if (socket.readyState === socket.OPEN) socket.send(payload);
-  }
-}
-
-await app.register(cors, { origin: 'http://localhost:3000' });
+await app.register(cors, {
+  origin: 'http://localhost:3000',
+  methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+});
 await app.register(websocket);
+await app.register(authPlugin);
+
+app.setErrorHandler((error, _request, reply) => {
+  if (error instanceof ZodError) {
+    return reply.code(400).send({ error: 'invalid_input', issues: error.issues });
+  }
+  if (error instanceof HttpError) {
+    return reply.code(error.status).send({ error: error.code, message: error.message });
+  }
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (error.code === 'P2002') return reply.code(409).send({ error: 'conflict' });
+    if (error.code === 'P2025') return reply.code(404).send({ error: 'not_found' });
+  }
+  app.log.error(error);
+  return reply.code(500).send({ error: 'internal_error' });
+});
 
 app.get('/health', async () => ({ ok: true }));
 
-app.get('/api/clicks', async () => {
-  return prisma.click.findMany({ orderBy: { id: 'asc' } });
-});
-
-const createClickBody = z.object({ message: z.string().min(1).max(280) });
-
-app.post('/api/clicks', async (request, reply) => {
-  const parsed = createClickBody.safeParse(request.body);
-  if (!parsed.success) {
-    return reply.code(400).send({ error: 'invalid_body', details: parsed.error.issues });
-  }
-
-  const click = await prisma.click.create({ data: { message: parsed.data.message } });
-  broadcast({ type: 'click.created', data: click });
-  return reply.code(201).send({ ok: true });
-});
+await app.register(authRoutes);
+await app.register(orgRoutes);
+await app.register(projectRoutes);
+await app.register(taskRoutes);
 
 app.register(async (instance) => {
-  instance.get('/ws', { websocket: true }, (socket) => {
-    sockets.add(socket);
-    socket.on('close', () => sockets.delete(socket));
-    socket.on('error', () => sockets.delete(socket));
-  });
+  instance.get('/ws', { websocket: true }, (socket) => addSocket(socket));
 });
 
-const port = Number(process.env.PORT ?? 3001);
-await app.listen({ port, host: '0.0.0.0' });
+await app.listen({ port: env.PORT, host: '0.0.0.0' });
