@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import argon2 from 'argon2';
 import jwtPlugin from '@fastify/jwt';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
@@ -29,10 +30,14 @@ export async function verifyPassword(hash: string, plain: string): Promise<boole
   }
 }
 
+export function signAccessToken(app: FastifyInstance, userId: string): string {
+  return app.jwt.sign({ userId }, { jti: randomUUID() });
+}
+
 async function authPluginImpl(app: FastifyInstance) {
   await app.register(jwtPlugin, {
     secret: env.JWT_SECRET,
-    sign: { expiresIn: env.JWT_EXPIRES_IN },
+    sign: { expiresIn: env.ACCESS_TOKEN_TTL },
   });
 
   app.decorate('authenticate', async (request: FastifyRequest, reply: FastifyReply) => {

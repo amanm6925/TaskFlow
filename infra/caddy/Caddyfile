@@ -1,0 +1,21 @@
+{$DOMAIN} {
+    encode zstd gzip
+
+    # Backend API + WebSocket
+    @backend {
+        path /api/* /ws /health
+    }
+    handle @backend {
+        reverse_proxy core-api:3001
+    }
+
+    # Everything else → Next.js frontend
+    handle {
+        reverse_proxy frontend:3000
+    }
+
+    log {
+        output stdout
+        format console
+    }
+}

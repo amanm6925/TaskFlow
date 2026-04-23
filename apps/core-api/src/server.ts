@@ -15,7 +15,7 @@ import { taskRoutes } from './routes/tasks.js';
 const app = Fastify({ logger: true });
 
 await app.register(cors, {
-  origin: 'http://localhost:3000',
+  origin: env.CORS_ORIGIN.split(',').map((s) => s.trim()),
   methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 });

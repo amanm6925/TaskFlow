@@ -1,8 +1,14 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../db.js';
-import { hashPassword, verifyPassword } from '../auth.js';
+import { hashPassword, signAccessToken, verifyPassword } from '../auth.js';
 import { HttpError } from '../permissions.js';
+import {
+  issueRefreshToken,
+  rotateRefreshToken,
+  revokeByRawToken,
+  type TokenMeta,
+} from '../tokens.js';
 
 const signupBody = z.object({
   email: z.string().email().toLowerCase(),
@@ -15,8 +21,24 @@ const loginBody = z.object({
   password: z.string().min(1).max(128),
 });
 
+const refreshBody = z.object({
+  refreshToken: z.string().min(1),
+});
+
+const logoutBody = z.object({
+  refreshToken: z.string().min(1),
+});
+
 function publicUser(u: { id: string; email: string; name: string; avatarUrl: string | null; createdAt: Date }) {
   return { id: u.id, email: u.email, name: u.name, avatarUrl: u.avatarUrl, createdAt: u.createdAt };
+}
+
+function metaFromRequest(request: FastifyRequest): TokenMeta {
+  const ua = request.headers['user-agent'];
+  return {
+    userAgent: typeof ua === 'string' ? ua.slice(0, 500) : null,
+    ipAddress: request.ip ?? null,
+  };
 }
 
 export async function authRoutes(app: FastifyInstance) {
@@ -31,8 +53,9 @@ export async function authRoutes(app: FastifyInstance) {
       data: { email: body.email, passwordHash, name: body.name },
     });
 
-    const token = app.jwt.sign({ userId: user.id });
-    return reply.code(201).send({ user: publicUser(user), token });
+    const accessToken = signAccessToken(app, user.id);
+    const refreshToken = await issueRefreshToken(user.id, metaFromRequest(request));
+    return reply.code(201).send({ user: publicUser(user), accessToken, refreshToken });
   });
 
   app.post('/api/auth/login', async (request, reply) => {
@@ -46,8 +69,28 @@ export async function authRoutes(app: FastifyInstance) {
 
     await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
-    const token = app.jwt.sign({ userId: user.id });
-    return reply.send({ user: publicUser(user), token });
+    const accessToken = signAccessToken(app, user.id);
+    const refreshToken = await issueRefreshToken(user.id, metaFromRequest(request));
+    return reply.send({ user: publicUser(user), accessToken, refreshToken });
+  });
+
+  app.post('/api/auth/refresh', async (request, reply) => {
+    const body = refreshBody.parse(request.body);
+
+    const result = await rotateRefreshToken(body.refreshToken, metaFromRequest(request));
+    if (!result.ok) {
+      request.log.info({ reason: result.reason }, 'refresh_rejected');
+      throw new HttpError(401, 'invalid_refresh');
+    }
+
+    const accessToken = signAccessToken(app, result.userId);
+    return reply.send({ accessToken, refreshToken: result.raw });
+  });
+
+  app.post('/api/auth/logout', async (request, reply) => {
+    const body = logoutBody.parse(request.body);
+    await revokeByRawToken(body.refreshToken);
+    return reply.code(204).send();
   });
 
   app.get('/api/me', { preHandler: app.authenticate }, async (request) => {
