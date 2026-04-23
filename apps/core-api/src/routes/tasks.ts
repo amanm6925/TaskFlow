@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { Prisma, Role, TaskPriority, TaskStatus } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
-import { HttpError, requireMembership, requireRole } from '../permissions.js';
+import { HttpError, authorize, loadMembership } from '../permissions.js';
 import { broadcast } from '../realtime.js';
 
 const createTaskBody = z.object({
@@ -44,7 +44,7 @@ export async function taskRoutes(app: FastifyInstance) {
     const { projectId } = z.object({ projectId: z.string().uuid() }).parse(request.params);
     const project = await prisma.project.findUnique({ where: { id: projectId } });
     if (!project) throw new HttpError(404, 'project_not_found');
-    await requireMembership(request.user.userId, project.organizationId);
+    await authorize(request, 'task:read', { orgId: project.organizationId });
 
     return prisma.task.findMany({
       where: { projectId },
@@ -62,8 +62,7 @@ export async function taskRoutes(app: FastifyInstance) {
 
     const project = await prisma.project.findUnique({ where: { id: projectId } });
     if (!project) throw new HttpError(404, 'project_not_found');
-    const m = await requireMembership(request.user.userId, project.organizationId);
-    requireRole(m.role, Role.MEMBER);
+    await authorize(request, 'task:create', { orgId: project.organizationId });
 
     if (body.assigneeId) await assertAssigneeInOrg(body.assigneeId, project.organizationId);
 
@@ -84,7 +83,7 @@ export async function taskRoutes(app: FastifyInstance) {
   app.get('/api/tasks/:taskId', { preHandler: app.authenticate }, async (request) => {
     const { taskId } = z.object({ taskId: z.string().uuid() }).parse(request.params);
     const task = await loadTaskWithProject(taskId);
-    await requireMembership(request.user.userId, task.project.organizationId);
+    await authorize(request, 'task:read', { orgId: task.project.organizationId });
     return task;
   });
 
@@ -92,12 +91,18 @@ export async function taskRoutes(app: FastifyInstance) {
     const { taskId } = z.object({ taskId: z.string().uuid() }).parse(request.params);
     const body = updateTaskBody.parse(request.body);
     const task = await loadTaskWithProject(taskId);
-    const m = await requireMembership(request.user.userId, task.project.organizationId);
 
-    const isPrivileged = m.role === Role.OWNER || m.role === Role.ADMIN;
-    const isStakeholder = task.reporterId === request.user.userId || task.assigneeId === request.user.userId;
-    if (!isPrivileged && !isStakeholder) throw new HttpError(403, 'forbidden');
-    if (m.role === Role.VIEWER) throw new HttpError(403, 'forbidden');
+    // Base RBAC: VIEWER denied outright.
+    const { membership } = await authorize(request, 'task:update', {
+      orgId: task.project.organizationId,
+    });
+
+    // Resource override: a MEMBER must additionally be reporter or assignee of this task.
+    if (membership.role === Role.MEMBER) {
+      const isStakeholder =
+        task.reporterId === request.user.userId || task.assigneeId === request.user.userId;
+      if (!isStakeholder) throw new HttpError(403, 'forbidden');
+    }
 
     if (body.assigneeId) await assertAssigneeInOrg(body.assigneeId, task.project.organizationId);
 
@@ -115,11 +120,15 @@ export async function taskRoutes(app: FastifyInstance) {
   app.delete('/api/tasks/:taskId', { preHandler: app.authenticate }, async (request, reply) => {
     const { taskId } = z.object({ taskId: z.string().uuid() }).parse(request.params);
     const task = await loadTaskWithProject(taskId);
-    const m = await requireMembership(request.user.userId, task.project.organizationId);
 
-    const isAdmin = m.role === Role.OWNER || m.role === Role.ADMIN;
-    const isReporter = task.reporterId === request.user.userId;
-    if (!isAdmin && !isReporter) throw new HttpError(403, 'forbidden');
+    const { membership } = await authorize(request, 'task:delete', {
+      orgId: task.project.organizationId,
+    });
+
+    // Resource override: a MEMBER must be the reporter to delete.
+    if (membership.role === Role.MEMBER && task.reporterId !== request.user.userId) {
+      throw new HttpError(403, 'forbidden');
+    }
 
     await prisma.task.delete({ where: { id: taskId } });
     broadcast({ type: 'task.deleted', data: { id: taskId, projectId: task.projectId } });

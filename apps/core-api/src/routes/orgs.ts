@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { Role } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
-import { HttpError, requireMembership, requireRole } from '../permissions.js';
+import { HttpError, authorize } from '../permissions.js';
 
 const createOrgBody = z.object({
   name: z.string().trim().min(1).max(100),
@@ -24,6 +24,7 @@ const updateMemberBody = z.object({
 });
 
 export async function orgRoutes(app: FastifyInstance) {
+  // Any authenticated user can create an org; they become its OWNER.
   app.post('/api/orgs', { preHandler: app.authenticate }, async (request, reply) => {
     const body = createOrgBody.parse(request.body);
     const userId = request.user.userId;
@@ -44,7 +45,7 @@ export async function orgRoutes(app: FastifyInstance) {
 
   app.get('/api/orgs/:orgId', { preHandler: app.authenticate }, async (request) => {
     const { orgId } = z.object({ orgId: z.string().uuid() }).parse(request.params);
-    await requireMembership(request.user.userId, orgId);
+    await authorize(request, 'org:read', { orgId });
     const org = await prisma.organization.findUnique({ where: { id: orgId } });
     if (!org) throw new HttpError(404, 'org_not_found');
     return org;
@@ -53,8 +54,7 @@ export async function orgRoutes(app: FastifyInstance) {
   app.patch('/api/orgs/:orgId', { preHandler: app.authenticate }, async (request) => {
     const { orgId } = z.object({ orgId: z.string().uuid() }).parse(request.params);
     const body = updateOrgBody.parse(request.body);
-    const m = await requireMembership(request.user.userId, orgId);
-    requireRole(m.role, Role.ADMIN);
+    await authorize(request, 'org:update', { orgId });
 
     if (body.slug) {
       const conflict = await prisma.organization.findFirst({
@@ -68,8 +68,7 @@ export async function orgRoutes(app: FastifyInstance) {
 
   app.delete('/api/orgs/:orgId', { preHandler: app.authenticate }, async (request, reply) => {
     const { orgId } = z.object({ orgId: z.string().uuid() }).parse(request.params);
-    const m = await requireMembership(request.user.userId, orgId);
-    requireRole(m.role, Role.OWNER);
+    await authorize(request, 'org:delete', { orgId });
 
     await prisma.organization.delete({ where: { id: orgId } });
     return reply.code(204).send();
@@ -77,7 +76,7 @@ export async function orgRoutes(app: FastifyInstance) {
 
   app.get('/api/orgs/:orgId/members', { preHandler: app.authenticate }, async (request) => {
     const { orgId } = z.object({ orgId: z.string().uuid() }).parse(request.params);
-    await requireMembership(request.user.userId, orgId);
+    await authorize(request, 'member:read', { orgId });
 
     const members = await prisma.membership.findMany({
       where: { organizationId: orgId },
@@ -97,8 +96,8 @@ export async function orgRoutes(app: FastifyInstance) {
   app.post('/api/orgs/:orgId/members', { preHandler: app.authenticate }, async (request, reply) => {
     const { orgId } = z.object({ orgId: z.string().uuid() }).parse(request.params);
     const body = inviteBody.parse(request.body);
-    const actor = await requireMembership(request.user.userId, orgId);
-    requireRole(actor.role, Role.ADMIN);
+    const { membership: actor } = await authorize(request, 'member:invite', { orgId });
+    // Promoting-to-OWNER is stricter than the matrix: only an OWNER can mint another OWNER.
     if (body.role === Role.OWNER && actor.role !== Role.OWNER) {
       throw new HttpError(403, 'only_owner_can_create_owner');
     }
@@ -122,8 +121,7 @@ export async function orgRoutes(app: FastifyInstance) {
       .object({ orgId: z.string().uuid(), userId: z.string().uuid() })
       .parse(request.params);
     const body = updateMemberBody.parse(request.body);
-    const actor = await requireMembership(request.user.userId, orgId);
-    requireRole(actor.role, Role.ADMIN);
+    const { membership: actor } = await authorize(request, 'member:update', { orgId });
     if (body.role === Role.OWNER && actor.role !== Role.OWNER) {
       throw new HttpError(403, 'only_owner_can_create_owner');
     }
@@ -133,6 +131,7 @@ export async function orgRoutes(app: FastifyInstance) {
     });
     if (!target) throw new HttpError(404, 'member_not_found');
 
+    // Invariant: at least one OWNER must remain. Not expressible in the role matrix.
     if (target.role === Role.OWNER && body.role !== Role.OWNER) {
       const owners = await prisma.membership.count({
         where: { organizationId: orgId, role: Role.OWNER },
@@ -151,8 +150,7 @@ export async function orgRoutes(app: FastifyInstance) {
     const { orgId, userId: targetId } = z
       .object({ orgId: z.string().uuid(), userId: z.string().uuid() })
       .parse(request.params);
-    const actor = await requireMembership(request.user.userId, orgId);
-    requireRole(actor.role, Role.ADMIN);
+    const { membership: actor } = await authorize(request, 'member:remove', { orgId });
 
     const target = await prisma.membership.findUnique({
       where: { userId_organizationId: { userId: targetId, organizationId: orgId } },

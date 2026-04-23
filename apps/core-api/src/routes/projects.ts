@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { Role } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
-import { HttpError, requireMembership, requireRole } from '../permissions.js';
+import { HttpError, authorize, can, loadMembership } from '../permissions.js';
 
 const createProjectBody = z.object({
   name: z.string().trim().min(1).max(200),
@@ -18,7 +18,7 @@ const updateProjectBody = z.object({
 export async function projectRoutes(app: FastifyInstance) {
   app.get('/api/orgs/:orgId/projects', { preHandler: app.authenticate }, async (request) => {
     const { orgId } = z.object({ orgId: z.string().uuid() }).parse(request.params);
-    await requireMembership(request.user.userId, orgId);
+    await authorize(request, 'project:read', { orgId });
 
     return prisma.project.findMany({
       where: { organizationId: orgId },
@@ -29,8 +29,7 @@ export async function projectRoutes(app: FastifyInstance) {
   app.post('/api/orgs/:orgId/projects', { preHandler: app.authenticate }, async (request, reply) => {
     const { orgId } = z.object({ orgId: z.string().uuid() }).parse(request.params);
     const body = createProjectBody.parse(request.body);
-    const m = await requireMembership(request.user.userId, orgId);
-    requireRole(m.role, Role.MEMBER);
+    await authorize(request, 'project:create', { orgId });
 
     const conflict = await prisma.project.findUnique({
       where: { organizationId_key: { organizationId: orgId, key: body.key } },
@@ -53,7 +52,7 @@ export async function projectRoutes(app: FastifyInstance) {
     const { projectId } = z.object({ projectId: z.string().uuid() }).parse(request.params);
     const project = await prisma.project.findUnique({ where: { id: projectId } });
     if (!project) throw new HttpError(404, 'project_not_found');
-    await requireMembership(request.user.userId, project.organizationId);
+    await authorize(request, 'project:read', { orgId: project.organizationId });
     return project;
   });
 
@@ -63,9 +62,15 @@ export async function projectRoutes(app: FastifyInstance) {
     const project = await prisma.project.findUnique({ where: { id: projectId } });
     if (!project) throw new HttpError(404, 'project_not_found');
 
-    const m = await requireMembership(request.user.userId, project.organizationId);
+    // Matrix allows OWNER/ADMIN. Creator override lifts MEMBER to edit their own project,
+    // but never VIEWER — viewers are read-only across the system.
+    const membership = await loadMembership(request, { orgId: project.organizationId });
     const isCreator = project.createdById === request.user.userId;
-    if (!isCreator) requireRole(m.role, Role.ADMIN);
+    const canViaMatrix = can('project:update', membership.role);
+    const canViaOverride = isCreator && membership.role !== Role.VIEWER;
+    if (!canViaMatrix && !canViaOverride) {
+      throw new HttpError(403, 'forbidden');
+    }
 
     return prisma.project.update({ where: { id: projectId }, data: body });
   });
@@ -75,8 +80,7 @@ export async function projectRoutes(app: FastifyInstance) {
     const project = await prisma.project.findUnique({ where: { id: projectId } });
     if (!project) throw new HttpError(404, 'project_not_found');
 
-    const m = await requireMembership(request.user.userId, project.organizationId);
-    requireRole(m.role, Role.ADMIN);
+    await authorize(request, 'project:delete', { orgId: project.organizationId });
 
     await prisma.project.delete({ where: { id: projectId } });
     return reply.code(204).send();
