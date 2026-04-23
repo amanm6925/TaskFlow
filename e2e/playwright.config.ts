@@ -24,6 +24,10 @@ const coreApiEnv = {
   REFRESH_TOKEN_TTL_DAYS: '30',
   CORS_ORIGIN: FRONTEND_BASE,
   NODE_ENV: 'test',
+  // Analytics is not running in the E2E stack yet — fetch calls will fail and
+  // the export endpoint will return 502. That's fine; no E2E test exercises it.
+  ANALYTICS_URL: 'http://localhost:13999',
+  INTERNAL_SERVICE_SECRET: 'e2e_internal_service_secret_value_xxx',
 };
 
 const frontendEnv = {

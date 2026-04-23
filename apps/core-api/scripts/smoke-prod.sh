@@ -11,6 +11,7 @@
 set -euo pipefail
 
 BASE="${BASE:-http://localhost:3001}"
+BASE="${BASE%/}"  # strip trailing slash — otherwise `$BASE/api/...` becomes `//api/...`
 STAMP=$(date +%s)
 EMAIL="smoke+${STAMP}@taskflow.test"
 PASSWORD="correct-horse-battery-staple-${STAMP}"

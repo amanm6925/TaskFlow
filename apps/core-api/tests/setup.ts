@@ -6,4 +6,6 @@ process.env.DATABASE_URL_APP = process.env.TEST_DATABASE_URL_APP ?? process.env.
 process.env.JWT_SECRET = process.env.JWT_SECRET ?? 'test_jwt_secret_at_least_32_chars_long_xx';
 process.env.ACCESS_TOKEN_TTL = process.env.ACCESS_TOKEN_TTL ?? '15m';
 process.env.REFRESH_TOKEN_TTL_DAYS = process.env.REFRESH_TOKEN_TTL_DAYS ?? '30';
+process.env.ANALYTICS_URL = process.env.ANALYTICS_URL ?? 'http://localhost:3002';
+process.env.INTERNAL_SERVICE_SECRET = process.env.INTERNAL_SERVICE_SECRET ?? 'test_internal_service_secret_xxx';
 process.env.NODE_ENV = 'test';

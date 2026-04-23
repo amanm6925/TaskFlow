@@ -36,6 +36,24 @@ services:
       CORS_ORIGIN: "https://${DOMAIN}"
       NODE_ENV: production
       PORT: 3001
+      ANALYTICS_URL: "http://analytics:3002"
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+
+  analytics:
+    build:
+      context: ../apps/analytics-service
+      dockerfile: Dockerfile
+    container_name: taskflow-analytics
+    restart: unless-stopped
+    environment:
+      DATABASE_URL_APP: "postgresql://taskflow_app:taskflow_app_pw@postgres:5432/${POSTGRES_DB}"
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
+      PORT: 3002
     depends_on:
       postgres:
         condition: service_healthy

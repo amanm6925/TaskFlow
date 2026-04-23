@@ -3,6 +3,8 @@ import { Role } from '@prisma/client';
 import { z } from 'zod';
 import { HttpError, authorize, can, loadMembership } from '../permissions.js';
 import { withTx } from '../tenant.js';
+import { fetchTasksCsv } from '../analytics.js';
+import { readOrMakeTraceparent } from '../trace.js';
 
 const createProjectBody = z.object({
   name: z.string().trim().min(1).max(200),
@@ -80,6 +82,56 @@ export async function projectRoutes(app: FastifyInstance) {
 
       return tx.project.update({ where: { id: projectId }, data: body });
     });
+  });
+
+  app.get('/api/projects/:projectId/export.csv', { preHandler: app.authenticate }, async (request, reply) => {
+    const { projectId } = z.object({ projectId: z.string().uuid() }).parse(request.params);
+
+    // Authorize the user before spending a network round-trip to analytics.
+    // We also resolve the project so analytics's RLS lookup can't disagree
+    // about existence (both services see the same row via the same policy).
+    const project = await withTx(request.user.userId, async (tx) => {
+      const p = await tx.project.findUnique({ where: { id: projectId } });
+      if (!p) throw new HttpError(404, 'project_not_found');
+      await authorize(request, 'project:read', { orgId: p.organizationId }, tx);
+      return p;
+    });
+
+    const traceparent = readOrMakeTraceparent(request);
+    request.log.info({ traceparent, projectId, downstream: 'analytics' }, 'export_csv_proxy');
+
+    let upstream: Response;
+    try {
+      upstream = await fetchTasksCsv(projectId, {
+        userId: request.user.userId,
+        traceparent,
+      });
+    } catch (err) {
+      request.log.error({ err, traceparent }, 'analytics_unreachable');
+      throw new HttpError(502, 'upstream_unavailable');
+    }
+
+    // Map upstream statuses carefully. Never pass through auth errors: a 401
+    // from analytics means OUR secret is wrong, not the user's token.
+    if (upstream.status === 404) throw new HttpError(404, 'project_not_found');
+    if (upstream.status === 401 || upstream.status === 403) {
+      request.log.error({ status: upstream.status, traceparent }, 'analytics_misconfigured');
+      throw new HttpError(502, 'upstream_misconfigured');
+    }
+    if (!upstream.ok) {
+      request.log.error({ status: upstream.status, traceparent }, 'analytics_failure');
+      throw new HttpError(502, 'upstream_failure');
+    }
+    if (!upstream.body) throw new HttpError(502, 'upstream_empty');
+
+    // Stream the CSV straight through — no buffering, constant memory.
+    const contentType = upstream.headers.get('content-type') ?? 'text/csv; charset=utf-8';
+    const disposition =
+      upstream.headers.get('content-disposition') ??
+      `attachment; filename="${project.key}-tasks.csv"`;
+    reply.header('content-type', contentType);
+    reply.header('content-disposition', disposition);
+    return reply.send(upstream.body);
   });
 
   app.delete('/api/projects/:projectId', { preHandler: app.authenticate }, async (request, reply) => {

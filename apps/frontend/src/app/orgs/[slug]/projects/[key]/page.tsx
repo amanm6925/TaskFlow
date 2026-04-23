@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
-import { api, ApiError, getAccessToken, getWsUrl } from '@/lib/api';
+import { api, API_BASE, ApiError, getAccessToken, getWsUrl } from '@/lib/api';
 
 type Project = { id: string; name: string; key: string; organizationId: string };
 type Task = {
@@ -102,6 +102,33 @@ export default function ProjectPage({ params }: { params: { slug: string; key: s
     }
   }
 
+  async function handleExport() {
+    if (!project) return;
+    setError(null);
+    const token = getAccessToken();
+    if (!token) { setError('not authenticated'); return; }
+    try {
+      const response = await fetch(`${API_BASE}/api/projects/${project.id}/export.csv`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error ?? `export failed: ${response.status}`);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${project.key}-tasks.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'export failed');
+    }
+  }
+
   if (loading) return <div className="p-8 text-zinc-500">loading…</div>;
   if (!org) return <div className="p-8 text-red-400">org not found</div>;
   if (!project && !error) return <div className="p-8 text-zinc-500">loading project…</div>;
@@ -112,7 +139,14 @@ export default function ProjectPage({ params }: { params: { slug: string; key: s
         <Link href={`/orgs/${slug}`} className="text-xs text-zinc-500 hover:text-zinc-200">← {org.name}</Link>
         <div className="flex items-baseline justify-between mt-1">
           <h1 className="text-xl font-bold">{project ? `${project.key} · ${project.name}` : 'project'}</h1>
-          <span className={`text-xs ${wsStatus === 'open' ? 'text-green-400' : wsStatus === 'connecting' ? 'text-yellow-400' : 'text-red-400'}`}>WS: {wsStatus}</span>
+          <div className="flex items-center gap-3">
+            {project && (
+              <button onClick={handleExport} className="text-xs text-blue-400 hover:underline">
+                export CSV
+              </button>
+            )}
+            <span className={`text-xs ${wsStatus === 'open' ? 'text-green-400' : wsStatus === 'connecting' ? 'text-yellow-400' : 'text-red-400'}`}>WS: {wsStatus}</span>
+          </div>
         </div>
       </header>
 
