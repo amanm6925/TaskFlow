@@ -51,6 +51,57 @@ test('task created by one user appears in another user\'s tab without reload', a
   await contextMember.close();
 });
 
+test('cross-org isolation: user in Org B receives zero WS frames for Org A events', async ({ browser }) => {
+  // Two entirely separate tenants. No membership overlap.
+  const ownerA = await signupViaApi({ name: 'Owner A' });
+  const ownerB = await signupViaApi({ name: 'Owner B' });
+  const orgA = await createOrg(ownerA.accessToken, { name: 'Tenant A' });
+  const orgB = await createOrg(ownerB.accessToken, { name: 'Tenant B' });
+  const projectA = await createProject(ownerA.accessToken, orgA.id);
+  const projectB = await createProject(ownerB.accessToken, orgB.id);
+
+  const contextA = await browser.newContext();
+  const contextB = await browser.newContext();
+  const pageA = await contextA.newPage();
+  const pageB = await contextB.newPage();
+
+  // Capture every WS frame pageB receives. This is the ground truth —
+  // asserts at the protocol layer, not the UI layer, so a server-side leak
+  // can't hide behind the frontend's projectId filter.
+  const framesReceivedByB: string[] = [];
+  pageB.on('websocket', (ws) => {
+    ws.on('framereceived', (frame) => {
+      const payload = typeof frame.payload === 'string' ? frame.payload : frame.payload.toString('utf-8');
+      framesReceivedByB.push(payload);
+    });
+  });
+
+  await injectTokens(pageA, ownerA.accessToken, ownerA.refreshToken);
+  await injectTokens(pageB, ownerB.accessToken, ownerB.refreshToken);
+
+  await pageA.goto(`/orgs/${orgA.slug}/projects/${projectA.key}`);
+  await pageB.goto(`/orgs/${orgB.slug}/projects/${projectB.key}`);
+  await expect(pageA.getByText('WS: open')).toBeVisible();
+  await expect(pageB.getByText('WS: open')).toBeVisible();
+
+  // A performs a mutation that would broadcast.
+  await pageA.getByPlaceholder(/new task title/i).fill('Secret Tenant A task');
+  await pageA.getByRole('button', { name: /^add$/i }).click();
+  await expect(pageA.getByText('Secret Tenant A task')).toBeVisible();
+
+  // Let any potential WS frame propagate.
+  await pageB.waitForTimeout(500);
+
+  // B must have received zero frames mentioning Org A — no task title, no orgId.
+  const leaked = framesReceivedByB.some(
+    (f) => f.includes('Secret Tenant A task') || f.includes(orgA.id) || f.includes(projectA.id)
+  );
+  expect(leaked, `pageB received leaked frames: ${JSON.stringify(framesReceivedByB)}`).toBe(false);
+
+  await contextA.close();
+  await contextB.close();
+});
+
 test('task status changed by one user updates in another user\'s tab', async ({ browser }) => {
   const { owner, member, org, project } = await setupSharedProject();
 

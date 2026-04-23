@@ -1,5 +1,6 @@
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:3001';
-export const WS_URL = (() => {
+
+function wsBase(): string {
   const base = process.env.NEXT_PUBLIC_API_BASE;
   if (!base) {
     if (typeof window === 'undefined') return 'ws://localhost:3001/ws';
@@ -7,7 +8,18 @@ export const WS_URL = (() => {
     return `${proto}//${window.location.host}/ws`;
   }
   return base.replace(/^http/, 'ws') + '/ws';
-})();
+}
+
+/**
+ * Build the /ws URL with the current access token in a query param.
+ * Call at connect time — not as a module-level constant — so the token reflects
+ * the latest refresh rotation.
+ */
+export function getWsUrl(): string | null {
+  const token = getAccessToken();
+  if (!token) return null;
+  return `${wsBase()}?token=${encodeURIComponent(token)}`;
+}
 
 const ACCESS_KEY = 'taskflow_access_token';
 const REFRESH_KEY = 'taskflow_refresh_token';

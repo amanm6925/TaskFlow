@@ -5,6 +5,7 @@ import { ZodError } from 'zod';
 import { Prisma } from '@prisma/client';
 import { env } from './env.js';
 import { authPlugin } from './auth.js';
+import { prismaAdmin } from './db.js';
 import { addSocket } from './realtime.js';
 import { HttpError } from './permissions.js';
 import { authRoutes } from './routes/auth.js';
@@ -48,7 +49,33 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(taskRoutes);
 
   await app.register(async (instance) => {
-    instance.get('/ws', { websocket: true }, (socket) => addSocket(socket));
+    // Browsers can't set Authorization headers on WebSocket connections,
+    // so we pass the access token as a query param. Short-lived token + wss://
+    // keeps the leak surface (access logs) acceptable.
+    instance.get('/ws', {
+      websocket: true,
+      preValidation: async (request, reply) => {
+        const token = (request.query as { token?: string }).token;
+        if (!token) return reply.code(401).send({ error: 'token_required' });
+        try {
+          const decoded = app.jwt.verify<{ userId: string }>(token);
+          (request as unknown as { userId: string }).userId = decoded.userId;
+        } catch {
+          return reply.code(401).send({ error: 'invalid_token' });
+        }
+      },
+    }, async (socket, request) => {
+      const userId = (request as unknown as { userId: string }).userId;
+      // Admin client: socket bootstrap is infrastructure, not request-scoped tenant access.
+      const memberships = await prismaAdmin.membership.findMany({
+        where: { userId },
+        select: { organizationId: true },
+      });
+      addSocket(socket, {
+        userId,
+        orgIds: new Set(memberships.map((m) => m.organizationId)),
+      });
+    });
   });
 
   return app;

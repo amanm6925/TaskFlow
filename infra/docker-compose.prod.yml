@@ -24,9 +24,15 @@ services:
     container_name: taskflow-core-api
     restart: unless-stopped
     environment:
+      # Admin URL — used by prisma migrate deploy inside the container and by
+      # any withAdminTx path at runtime.
       DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public"
+      # App URL — restricted taskflow_app role, subject to RLS policies.
+      # The role and its password are created by the enable_rls migration.
+      DATABASE_URL_APP: "postgresql://taskflow_app:taskflow_app_pw@postgres:5432/${POSTGRES_DB}?schema=public"
       JWT_SECRET: ${JWT_SECRET}
-      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-24h}
+      ACCESS_TOKEN_TTL: ${ACCESS_TOKEN_TTL:-15m}
+      REFRESH_TOKEN_TTL_DAYS: ${REFRESH_TOKEN_TTL_DAYS:-30}
       CORS_ORIGIN: "https://${DOMAIN}"
       NODE_ENV: production
       PORT: 3001

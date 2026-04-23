@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
-import { api, ApiError, WS_URL, getAccessToken } from '@/lib/api';
+import { api, ApiError, getAccessToken, getWsUrl } from '@/lib/api';
 
 type Project = { id: string; name: string; key: string; organizationId: string };
 type Task = {
@@ -56,7 +56,9 @@ export default function ProjectPage({ params }: { params: { slug: string; key: s
 
   useEffect(() => {
     if (!project || !getAccessToken()) return;
-    const ws = new WebSocket(WS_URL);
+    const url = getWsUrl();
+    if (!url) return;
+    const ws = new WebSocket(url);
     wsRef.current = ws;
     ws.onopen = () => setWsStatus('open');
     ws.onclose = () => setWsStatus('closed');

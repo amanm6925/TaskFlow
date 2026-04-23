@@ -62,7 +62,7 @@ export async function taskRoutes(app: FastifyInstance) {
     const { projectId } = z.object({ projectId: z.string().uuid() }).parse(request.params);
     const body = createTaskBody.parse(request.body);
 
-    const { task, projectKey } = await withTx(request.user.userId, async (tx) => {
+    const { task, projectKey, orgId } = await withTx(request.user.userId, async (tx) => {
       const project = await tx.project.findUnique({ where: { id: projectId } });
       if (!project) throw new HttpError(404, 'project_not_found');
       await authorize(request, 'task:create', { orgId: project.organizationId }, tx);
@@ -79,10 +79,10 @@ export async function taskRoutes(app: FastifyInstance) {
         dueDate: body.dueDate ? new Date(body.dueDate) : null,
       });
 
-      return { task: created, projectKey: project.key };
+      return { task: created, projectKey: project.key, orgId: project.organizationId };
     });
 
-    broadcast({ type: 'task.created', data: { ...task, projectKey } });
+    broadcast({ type: 'task.created', orgId, data: { ...task, projectKey } });
     return reply.code(201).send(task);
   });
 
@@ -99,7 +99,7 @@ export async function taskRoutes(app: FastifyInstance) {
     const { taskId } = z.object({ taskId: z.string().uuid() }).parse(request.params);
     const body = updateTaskBody.parse(request.body);
 
-    const { updated, projectKey } = await withTx(request.user.userId, async (tx) => {
+    const { updated, projectKey, orgId } = await withTx(request.user.userId, async (tx) => {
       const task = await loadTaskWithProject(tx, taskId);
 
       const { membership } = await authorize(request, 'task:update', {
@@ -121,17 +121,17 @@ export async function taskRoutes(app: FastifyInstance) {
           dueDate: body.dueDate === undefined ? undefined : body.dueDate ? new Date(body.dueDate) : null,
         },
       });
-      return { updated: result, projectKey: task.project.key };
+      return { updated: result, projectKey: task.project.key, orgId: task.project.organizationId };
     });
 
-    broadcast({ type: 'task.updated', data: { ...updated, projectKey } });
+    broadcast({ type: 'task.updated', orgId, data: { ...updated, projectKey } });
     return updated;
   });
 
   app.delete('/api/tasks/:taskId', { preHandler: app.authenticate }, async (request, reply) => {
     const { taskId } = z.object({ taskId: z.string().uuid() }).parse(request.params);
 
-    const projectId = await withTx(request.user.userId, async (tx) => {
+    const { projectId, orgId } = await withTx(request.user.userId, async (tx) => {
       const task = await loadTaskWithProject(tx, taskId);
 
       const { membership } = await authorize(request, 'task:delete', {
@@ -143,10 +143,10 @@ export async function taskRoutes(app: FastifyInstance) {
       }
 
       await tx.task.delete({ where: { id: taskId } });
-      return task.projectId;
+      return { projectId: task.projectId, orgId: task.project.organizationId };
     });
 
-    broadcast({ type: 'task.deleted', data: { id: taskId, projectId } });
+    broadcast({ type: 'task.deleted', orgId, data: { id: taskId, projectId } });
     return reply.code(204).send();
   });
 }
