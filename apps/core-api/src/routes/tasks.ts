@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { HttpError, authorize } from '../permissions.js';
 import { withTx, type Tx } from '../tenant.js';
 import { broadcast } from '../realtime.js';
+import { emitTaskEvent } from '../notify.js';
 
 const createTaskBody = z.object({
   title: z.string().trim().min(1).max(300),
@@ -79,6 +80,19 @@ export async function taskRoutes(app: FastifyInstance) {
         dueDate: body.dueDate ? new Date(body.dueDate) : null,
       });
 
+      await emitTaskEvent(tx, {
+        type: 'task.created',
+        orgId: project.organizationId,
+        projectId: project.id,
+        projectKey: project.key,
+        taskId: created.id,
+        taskNumber: created.number,
+        title: created.title,
+        status: created.status,
+        reporterId: created.reporterId,
+        assigneeId: created.assigneeId,
+      });
+
       return { task: created, projectKey: project.key, orgId: project.organizationId };
     });
 
@@ -121,6 +135,20 @@ export async function taskRoutes(app: FastifyInstance) {
           dueDate: body.dueDate === undefined ? undefined : body.dueDate ? new Date(body.dueDate) : null,
         },
       });
+
+      await emitTaskEvent(tx, {
+        type: 'task.updated',
+        orgId: task.project.organizationId,
+        projectId: task.project.id,
+        projectKey: task.project.key,
+        taskId: result.id,
+        taskNumber: result.number,
+        title: result.title,
+        status: result.status,
+        reporterId: result.reporterId,
+        assigneeId: result.assigneeId,
+      });
+
       return { updated: result, projectKey: task.project.key, orgId: task.project.organizationId };
     });
 
@@ -143,6 +171,17 @@ export async function taskRoutes(app: FastifyInstance) {
       }
 
       await tx.task.delete({ where: { id: taskId } });
+
+      await emitTaskEvent(tx, {
+        type: 'task.deleted',
+        orgId: task.project.organizationId,
+        projectId: task.project.id,
+        projectKey: task.project.key,
+        taskId: task.id,
+        taskNumber: task.number,
+        title: task.title,
+      });
+
       return { projectId: task.projectId, orgId: task.project.organizationId };
     });
 

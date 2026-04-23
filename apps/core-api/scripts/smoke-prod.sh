@@ -82,6 +82,18 @@ count=$(echo "$tasks" | jq 'length')
 [ "$count" = "1" ] || fail "expected 1 task, got $count"
 ok "list shows the task we created"
 
+# ----- export CSV (proves core-api → analytics inter-service call + streaming)
+section "export CSV (core-api → analytics)"
+# Python's csv.writer emits CRLF line endings (RFC 4180). Strip \r for shell comparison.
+csv=$(curl -sSf "$BASE/api/projects/$project_id/export.csv" -H "authorization: Bearer $access" | tr -d '\r')
+header=$(echo "$csv" | head -1)
+expected_header="key,title,status,priority,due_date,reporter,assignee,created_at,updated_at"
+[ "$header" = "$expected_header" ] || fail "unexpected CSV header: $header"
+rows=$(echo "$csv" | tail -n +2 | wc -l | tr -d ' ')
+[ "$rows" = "1" ] || fail "expected 1 data row, got $rows"
+echo "$csv" | grep -q 'First task from smoke' || fail "task title missing from CSV"
+ok "analytics returned correct CSV for this tenant"
+
 # ----- refresh rotation + reuse detection
 section "refresh rotation"
 refreshed=$(curl -sSf -X POST "$BASE/api/auth/refresh" \

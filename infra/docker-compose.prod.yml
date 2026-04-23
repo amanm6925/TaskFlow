@@ -60,6 +60,21 @@ services:
     networks:
       - internal
 
+  notifications:
+    build:
+      context: ../apps/notifications-service
+      dockerfile: Dockerfile
+    container_name: taskflow-notifications
+    restart: unless-stopped
+    environment:
+      DATABASE_URL_APP: "postgresql://taskflow_app:taskflow_app_pw@postgres:5432/${POSTGRES_DB}"
+      PORT: 3003
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+
   frontend:
     build:
       context: ../apps/frontend

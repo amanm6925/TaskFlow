@@ -1,0 +1,23 @@
+server:
+  port: ${PORT:3003}
+
+spring:
+  application:
+    name: taskflow-notifications
+  # Spring backs off auto-configuring a DataSource because DataSourceConfig
+  # provides one programmatically (it parses DATABASE_URL_APP, which isn't
+  # JDBC-formatted).
+
+logging:
+  level:
+    root: INFO
+    com.taskflow.notifications: DEBUG
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info
+  endpoint:
+    health:
+      show-details: always

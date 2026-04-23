@@ -17,5 +17,29 @@ services:
       timeout: 5s
       retries: 5
 
+  # Run notifications-service alongside dev postgres for local smoke tests.
+  # Not started by default — use: docker compose up -d notifications
+  # (core-api and frontend stay on bare metal for fast iteration.)
+  notifications:
+    build:
+      context: ../apps/notifications-service
+      dockerfile: Dockerfile
+    container_name: taskflow-notifications-dev
+    restart: unless-stopped
+    environment:
+      # Reach dev postgres via host.docker.internal so we don't have to network
+      # this container with core-api (which runs outside compose in dev).
+      DATABASE_URL_APP: "postgresql://taskflow_app:taskflow_app_pw@host.docker.internal:5432/taskflow"
+      PORT: 3003
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "3003:3003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - notifications
+
 volumes:
   postgres_data:
