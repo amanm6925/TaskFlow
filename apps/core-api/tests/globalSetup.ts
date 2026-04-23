@@ -30,12 +30,21 @@ export async function setup() {
     .withPassword('taskflow_test')
     .start();
 
-  const databaseUrl = container.getConnectionUri();
-  process.env.DATABASE_URL = databaseUrl;
-  process.env.TEST_DATABASE_URL = databaseUrl;
+  // Admin URL (superuser inside the container). Used for migrations and fixtures.
+  const adminUrl = container.getConnectionUri();
+  // App URL. The taskflow_app role is created by the RLS migration.
+  const host = container.getHost();
+  const port = container.getPort();
+  const db = container.getDatabase();
+  const appUrl = `postgresql://taskflow_app:taskflow_app_pw@${host}:${port}/${db}`;
+
+  process.env.DATABASE_URL = adminUrl;
+  process.env.DATABASE_URL_APP = appUrl;
+  process.env.TEST_DATABASE_URL = adminUrl;
+  process.env.TEST_DATABASE_URL_APP = appUrl;
 
   execSync('npx prisma migrate deploy', {
-    env: { ...process.env, DATABASE_URL: databaseUrl },
+    env: { ...process.env, DATABASE_URL: adminUrl },
     stdio: 'inherit',
   });
 }

@@ -12,9 +12,12 @@ export const DB_PASSWORD = process.env.E2E_DB_PASSWORD ?? 'taskflow_dev_pw';
 export const DB_NAME = process.env.E2E_DB_NAME ?? 'taskflow_e2e';
 export const DATABASE_URL =
   `postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}`;
+export const DATABASE_URL_APP =
+  `postgresql://taskflow_app:taskflow_app_pw@${DB_HOST}:${DB_PORT}/${DB_NAME}`;
 
 const coreApiEnv = {
   DATABASE_URL,
+  DATABASE_URL_APP,
   PORT: String(API_PORT),
   JWT_SECRET: 'e2e_jwt_secret_at_least_32_chars_long_xxx',
   ACCESS_TOKEN_TTL: '15m',

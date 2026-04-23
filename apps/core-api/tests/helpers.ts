@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { Role, TaskPriority, TaskStatus } from '@prisma/client';
 import { buildApp } from '../src/app.js';
-import { prisma } from '../src/db.js';
+import { prisma, prismaAdmin } from '../src/db.js';
 
 let appInstance: FastifyInstance | undefined;
 
@@ -19,6 +19,7 @@ export async function closeTestApp() {
     appInstance = undefined;
   }
   await prisma.$disconnect();
+  await prismaAdmin.$disconnect();
 }
 
 const APP_TABLES = [
@@ -31,7 +32,7 @@ const APP_TABLES = [
 ];
 
 export async function resetDb() {
-  await prisma.$executeRawUnsafe(
+  await prismaAdmin.$executeRawUnsafe(
     `TRUNCATE TABLE ${APP_TABLES.map((t) => `"${t}"`).join(', ')} RESTART IDENTITY CASCADE`
   );
 }
@@ -78,7 +79,7 @@ export async function createOrg(ownerUserId: string, overrides: { name?: string;
   orgCounter += 1;
   const name = overrides.name ?? `Org ${orgCounter}`;
   const slug = overrides.slug ?? `org-${orgCounter}-${Date.now()}`;
-  return prisma.$transaction(async (tx) => {
+  return prismaAdmin.$transaction(async (tx) => {
     const org = await tx.organization.create({ data: { name, slug } });
     await tx.membership.create({
       data: { userId: ownerUserId, organizationId: org.id, role: Role.OWNER },
@@ -88,7 +89,7 @@ export async function createOrg(ownerUserId: string, overrides: { name?: string;
 }
 
 export async function addMember(userId: string, orgId: string, role: Role) {
-  return prisma.membership.create({
+  return prismaAdmin.membership.create({
     data: { userId, organizationId: orgId, role },
   });
 }
@@ -103,7 +104,7 @@ export async function createProject(
   projectCounter += 1;
   const name = overrides.name ?? `Project ${projectCounter}`;
   const key = overrides.key ?? `P${projectCounter}${Date.now().toString().slice(-4)}`;
-  return prisma.project.create({
+  return prismaAdmin.project.create({
     data: { organizationId: orgId, name, key: key.toUpperCase().slice(0, 10), createdById },
   });
 }
@@ -113,9 +114,9 @@ export async function createTask(
   reporterId: string,
   overrides: { title?: string; assigneeId?: string | null; status?: TaskStatus; priority?: TaskPriority } = {},
 ) {
-  const max = await prisma.task.aggregate({ _max: { number: true }, where: { projectId } });
+  const max = await prismaAdmin.task.aggregate({ _max: { number: true }, where: { projectId } });
   const number = (max._max.number ?? 0) + 1;
-  return prisma.task.create({
+  return prismaAdmin.task.create({
     data: {
       projectId,
       number,

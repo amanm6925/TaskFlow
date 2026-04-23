@@ -30,8 +30,11 @@ describe('IDOR defense — cross-org task access', () => {
       url: `/api/tasks/${taskA.id}`,
       headers: authHeader(ownerB.accessToken),
     });
+    // RLS filters the task out at the DB level, so the handler responds
+    // 'task_not_found' — strictly better than 'org_not_found' because it
+    // doesn't leak that a task with this id exists.
     expect(res.statusCode).toBe(404);
-    expect(res.json().error).toBe('org_not_found');
+    expect(res.json().error).toBe('task_not_found');
   });
 
   it('user from Org B cannot PATCH a task in Org A', async () => {

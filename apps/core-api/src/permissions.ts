@@ -1,6 +1,8 @@
 import type { FastifyRequest } from 'fastify';
-import { Role, type Membership } from '@prisma/client';
+import { Role, type Membership, type Prisma } from '@prisma/client';
 import { prisma } from './db.js';
+
+type DbClient = typeof prisma | Prisma.TransactionClient;
 
 export class HttpError extends Error {
   constructor(public status: number, public code: string, message?: string) {
@@ -62,8 +64,9 @@ export async function authorize(
   request: FastifyRequest,
   action: Action,
   scope: Scope,
+  db: DbClient = prisma,
 ): Promise<AuthContext> {
-  const membership = await prisma.membership.findUnique({
+  const membership = await db.membership.findUnique({
     where: {
       userId_organizationId: {
         userId: request.user.userId,
@@ -83,8 +86,12 @@ export async function authorize(
  * Useful when the handler needs the membership for a resource-specific override
  * (e.g. reporter-can-delete-own-task) and will decide on the role itself.
  */
-export async function loadMembership(request: FastifyRequest, scope: Scope): Promise<Membership> {
-  const membership = await prisma.membership.findUnique({
+export async function loadMembership(
+  request: FastifyRequest,
+  scope: Scope,
+  db: DbClient = prisma,
+): Promise<Membership> {
+  const membership = await db.membership.findUnique({
     where: {
       userId_organizationId: {
         userId: request.user.userId,

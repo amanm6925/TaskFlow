@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { hashPassword, signAccessToken, verifyPassword } from '../auth.js';
 import { HttpError } from '../permissions.js';
+import { withTx } from '../tenant.js';
 import {
   issueRefreshToken,
   rotateRefreshToken,
@@ -94,25 +95,27 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   app.get('/api/me', { preHandler: app.authenticate }, async (request) => {
-    const user = await prisma.user.findUnique({
-      where: { id: request.user.userId },
-      include: {
-        memberships: {
-          include: { organization: true },
-          orderBy: { joinedAt: 'asc' },
+    return withTx(request.user.userId, async (tx) => {
+      const user = await tx.user.findUnique({
+        where: { id: request.user.userId },
+        include: {
+          memberships: {
+            include: { organization: true },
+            orderBy: { joinedAt: 'asc' },
+          },
         },
-      },
-    });
-    if (!user) throw new HttpError(404, 'user_not_found');
+      });
+      if (!user) throw new HttpError(404, 'user_not_found');
 
-    return {
-      user: publicUser(user),
-      organizations: user.memberships.map((m) => ({
-        id: m.organization.id,
-        name: m.organization.name,
-        slug: m.organization.slug,
-        role: m.role,
-      })),
-    };
+      return {
+        user: publicUser(user),
+        organizations: user.memberships.map((m) => ({
+          id: m.organization.id,
+          name: m.organization.name,
+          slug: m.organization.slug,
+          role: m.role,
+        })),
+      };
+    });
   });
 }
