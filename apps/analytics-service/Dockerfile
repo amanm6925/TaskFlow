@@ -8,17 +8,19 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Install deps into a venv so the runtime stage can copy one self-contained dir.
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
 COPY requirements.txt ./
-RUN pip install --upgrade pip && \
-    pip install --target=/install -r requirements.txt
+RUN pip install --upgrade pip && pip install -r requirements.txt
 
 # --- runtime stage -----------------------------------------------------------
 FROM python:3.12-slim-bookworm AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app \
-    PATH="/install/bin:$PATH"
+    PATH="/opt/venv/bin:$PATH"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       dumb-init ca-certificates curl \
@@ -28,7 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY --from=build --chown=app:app /install /install
+COPY --from=build /opt/venv /opt/venv
 COPY --chown=app:app app ./app
 COPY --chown=app:app pytest.ini ./
 
